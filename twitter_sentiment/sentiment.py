@@ -10,30 +10,56 @@ import simplejson as json
 
 from config import *
 
-# es = Elasticsearch()
+es = Elasticsearch(['sdl16377.labs.teradata.com:9200'])
 
 class TweetStreamListener(StreamListener):
     
     def on_data(self, data):
         dict_data = json.loads(data)
 
-        text = ''
+        try:
+            text = dict_data['text']
+        except KeyError as e:
+            return True
 
-        if not dict_data['text'].startswith("RT @"):
+
+        if not text.startswith("RT @"):
             try:
                 text = dict_data['extended_tweet']['full_text']
             except KeyError:
-                text = dict_data['text']
+                pass
         else:
             try:
                 text = dict_data['retweeted_status']['extended_tweet']['full_text']
             except KeyError:
-                text = dict_data['retweeted_status']['text']
+                try:
+                    text = dict_data['retweeted_status']['text']
+                except KeyError:
+                    pass
 
             text = "RT: {}".format(text)
 
-        print(text)
-        print('')
+
+        tweet = TextBlob(text)
+
+        # determine if sentiment is positive, negative, or neutral
+        if tweet.sentiment.polarity < 0:
+            sentiment = "negative"
+        elif tweet.sentiment.polarity == 0:
+            sentiment = "neutral"
+        else:
+            sentiment = "positive"
+
+        # add text and sentiment info to elasticsearch
+        es.index(index="sentiment",
+                 doc_type="test-type",
+                 body={"author": dict_data["user"]["screen_name"],
+                       "date": dict_data["created_at"],
+                       "message": text,
+                       "polarity": tweet.sentiment.polarity,
+                       "subjectivity": tweet.sentiment.subjectivity,
+                       "sentiment": sentiment})
+        return True
 
 
     def on_error(self, status):
@@ -56,5 +82,4 @@ if __name__ == '__main__':
     stream = Stream(auth, listener)
 
     # search twitter for "xxx" keyword
-    stream.filter(track=['tlry'])
-    
+    stream.filter(track=['Thousand Oaks'])
